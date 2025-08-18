@@ -1,5 +1,14 @@
 ﻿import "./globals.css";
-export const metadata={title:"Inspector Vector",description:"Train the model. Solve the mystery."};
-export default function RootLayout({children}:{children:React.ReactNode}) {
-  return (<html lang="en"><body className="bg-slate-950 text-slate-200">{children}</body></html>);
+
+export const metadata = {
+  title: "Inspector Vector",
+  description: "Train the model. Solve the mystery."
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body className="bg-slate-950 text-slate-200 min-h-screen overflow-auto">{children}</body>
+    </html>
+  );
 }
