@@ -1,0 +1,40 @@
+# Inspector Vector – Cursor Rules
+Mission: Build a Tempest-style, canvas-based game that teaches LLM concepts.
+Tagline: “Train the model. Solve the mystery.”
+
+Tech & constraints
+- Next.js 14 App Router + TypeScript + Tailwind. No extra libs unless justified.
+- Client rendering for canvas; serverless API under /app/api for scoring/state.
+- Windows-friendly (ASCII-only), Netlify-friendly (no Node native deps).
+- Keep code small, readable, and strictly typed.
+
+Core UI (must preserve)
+- 3 columns: [ActionsPanel | TempestCanvas | LayerLadder].
+- Canvas: square, auto-fit, min 560px; only show scrollbars if viewport < min.
+- Token ring: 36 tokens, two lanes (outer/inner), spokes, two rings.
+- Energy meter in Actions panel. Buttons: Advance, Retry, Cash Out.
+- Layer Ladder: 10 layers (1..10), vertical scrubber to view <= current layer.
+
+Gameplay v0
+- “Advance” slightly rotates & re-highlights tokens, decreases energy.
+- “Retry” minor perturbation, small energy cost.
+- Ladder “view” swaps displayed layer state (read-only for now).
+
+Immediate tasks (do in order)
+1) Persist per-layer states in memory (array of 10) so ladder scrubbing shows past layers.
+2) Add “Edit mode” toggle on ladder to allow re-running actions on a prior layer without changing later layers (fork or overwrite—config flag).
+3) Add animated flourishes (Tempest burst on Advance, Galaga hit sparks on winner tokens) at 60fps with requestAnimationFrame; keep CPU <5% idle.
+4) Scoring: move stub in /api/score to compute meters from action log; return cleared + score.
+5) Accessibility: buttons tabbable, aria-labels, visible focus.
+
+Style
+- Tailwind; no global magic numbers. Use utility classes and CSS vars if needed.
+- Keep functions <60 lines. Extract pure helpers. Name intentionally.
+- Add JSDoc on all exported functions.
+
+Non-goals (for now)
+- No OpenAI calls. No databases. No auth. No sound effects yet.
+
+When responding
+- Read: components/*.tsx, app/page.tsx, lib/*.ts, app/api/*.
+- Propose minimal diffs. Do not rewrite files wholesale unless necessary.
