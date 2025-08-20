@@ -1,265 +1,186 @@
-// components/RoundPanel.tsx
 "use client";
-
 import { useMemo, useState } from "react";
-import Hint from "./Hint";
+import Hint from "@/components/Hint";
 
-/** Payload sent to parent when the player confirms the round. */
 export type RoundActionPayload =
-  | { type: "stabilize"; strength: number }                         // no selection required
-  | { type: "beam"; mode: "auto" | "selected"; target?: number }    // 'selected' requires 1 token
-  | { type: "magnetize"; anchor: number; pull: number }             // requires 1 token
-  | { type: "rotate"; degrees: number }                              // no selection required
-  | { type: "spread"; anchor: number; amount: number };             // requires 1 token
+  | { type: "stabilize"; strength: number }
+  | { type: "beam"; mode: "auto" | "selected"; target?: number }
+  | { type: "magnetize"; anchor: number; pull: number }
+  | { type: "rotate"; degrees: number }
+  | { type: "spread"; anchor: number; amount: number };
 
-type Props = {
-  selected?: number[];                    // indices from TempestCanvas clicks
-  onExecute(action: RoundActionPayload): void;
-};
+export default function RoundPanel({
+  selected,
+  rounds = 0,
+  applied = false,
+  onExecute,
+  onNextRound,
+  onForceNextLayer,
+}: {
+  selected: number[];
+  rounds?: number; // 0..9
+  applied?: boolean; // true after Apply, resets on next round
+  onExecute: (p: RoundActionPayload) => void;
+  onNextRound: () => void;
+  onForceNextLayer: () => void;
+}) {
+  const [action, setAction] = useState<"stabilize"|"beam"|"magnetize"|"rotate"|"spread"|null>(null);
+  const [strength, setStrength] = useState(0.25);
+  const [degrees, setDegrees] = useState(5);
+  const [amount, setAmount] = useState(0.4);
+  const [mode, setMode] = useState<"auto"|"selected">("auto");
 
-export default function RoundPanel({ selected = [], onExecute }: Props) {
-  type ActionKey = "stabilize" | "beam" | "magnetize" | "rotate" | "spread";
+  // Action requirements per design brief
+  const needsAnchor = action === "magnetize" || action === "spread";
+  const anchorOk = !needsAnchor || selected.length >= 1;
+  const beamSelectedOk = action === "beam" && mode === "selected" ? selected.length >= 1 : true;
+  
+  // Apply button enabled only when requirements met
+  const canApply = action && anchorOk && beamSelectedOk && !applied;
+  
+  // Done button enabled only after Apply
+  const canDone = applied;
 
-  const [action, setAction] = useState<ActionKey | null>(null);
+  const apply = () => {
+    if (!canApply) return;
+    if (action === "stabilize") onExecute({ type: "stabilize", strength });
+    if (action === "beam")     onExecute({ type: "beam", mode, target: mode==="selected" ? selected[0] : undefined });
+    if (action === "magnetize" && anchorOk) onExecute({ type: "magnetize", anchor: selected[0], pull: amount });
+    if (action === "rotate")   onExecute({ type: "rotate", degrees });
+    if (action === "spread" && anchorOk) onExecute({ type: "spread", anchor: selected[0], amount });
+  };
 
-  // Tunables (simple, parent applies real transforms)
-  const [stabilizeStrength, setStabilizeStrength] = useState(25); // 5..80 (%)
-  const [beamMode, setBeamMode] = useState<"auto" | "selected">("auto");
-  const [magnetPull, setMagnetPull] = useState(35);               // 10..70 (%)
-  const [rotateDeg, setRotateDeg] = useState(10);                 // -45..45 (deg)
-  const [spreadAmt, setSpreadAmt] = useState(30);                 // 10..70 (%)
-
-  // Validation: which actions need exactly 1 selected token?
-  const needsOneSelection = useMemo(
-    () => action === "magnetize" || (action === "beam" && beamMode === "selected") || action === "spread",
-    [action, beamMode]
-  );
-  const selectionOK = !needsOneSelection || selected.length === 1;
-
-  const disabledReason = useMemo(() => {
-    if (!action) return "Pick an action.";
-    if (!selectionOK) return "Select exactly one token on the wheel.";
-    return null;
-  }, [action, selectionOK]);
-
-  function confirm() {
-    if (!action || disabledReason) return;
-
-    if (action === "stabilize") {
-      onExecute({ type: "stabilize", strength: clamp01(stabilizeStrength / 100) });
-      return;
-    }
-    if (action === "beam") {
-      const target = beamMode === "selected" ? selected[0] : undefined;
-      onExecute({ type: "beam", mode: beamMode, target });
-      return;
-    }
-    if (action === "magnetize") {
-      onExecute({ type: "magnetize", anchor: selected[0], pull: clamp01(magnetPull / 100) });
-      return;
-    }
-    if (action === "rotate") {
-      onExecute({ type: "rotate", degrees: clamp(rotateDeg, -45, 45) });
-      return;
-    }
-    if (action === "spread") {
-      onExecute({ type: "spread", anchor: selected[0], amount: clamp01(spreadAmt / 100) });
-      return;
-    }
-  }
+  const roundsLeft = 10 - (rounds + 1);
+  const isLastRound = rounds >= 9;
 
   return (
-    <aside className="space-y-3 rounded-lg border-2 border-slate-600/70 bg-slate-950/70 p-3 text-sm shadow-[0_0_0_1px_rgba(56,189,248,0.08)]">
-      <div className="flex items-center justify-between">
-        <div className="font-semibold text-slate-200">Round action</div>
-        <Hint title="How rounds work" side="left">
-          Choose one action below (one per round). Some actions require selecting a single token on the wheel first.
-          Learn more:{" "}
-          <a className="underline text-cyan-300" href="https://en.wikipedia.org/wiki/Attention_(machine_learning)" target="_blank" rel="noreferrer">Attention</a>,{" "}
-          <a className="underline text-cyan-300" href="https://en.wikipedia.org/wiki/Cosine_similarity" target="_blank" rel="noreferrer">Cosine similarity</a>,{" "}
-          <a className="underline text-cyan-300" href="https://en.wikipedia.org/wiki/Vector_space_model" target="_blank" rel="noreferrer">Vector spaces</a>.
+    <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 min-w-0">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold text-slate-200">Round Actions</h3>
+        <Hint title="Round flow" preferredSide="right">
+          <div className="text-left">
+            Pick <b>one</b> action, adjust its controls, then <b>Apply</b>. After the effect settles, click
+            <b> Done — go to next round</b>. Ten rounds make a layer.
+          </div>
         </Hint>
       </div>
 
-      {/* One action per ROW (equal width) */}
-      <div className="flex flex-col gap-2">
-        {([
-          { key: "stabilize", label: "Stabilize", desc: "Nudge spokes toward even spacing (a prior)" },
-          { key: "beam",      label: "Attention Beam", desc: "Boost influence globally or for a selected token" },
-          { key: "magnetize", label: "Magnetize", desc: "Pull neighbors toward a selected anchor" },
-          { key: "rotate",    label: "Rotate", desc: "Rotate the whole space slightly" },
-          { key: "spread",    label: "Spread", desc: "Push neighbors away from a selected anchor" },
-        ] as {key: ActionKey; label: string; desc: string}[]).map(({ key, label, desc }) => (
-          <button
-            key={key}
-            onClick={() => setAction(key)}
-            aria-pressed={action === key}
-            className={[
-              "w-full text-left px-3 py-2 rounded-md border transition-colors",
-              action === key
-                ? "bg-slate-700 text-white border-slate-600"
-                : "bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800",
-            ].join(" ")}
-          >
-            <div className="flex items-center justify-between">
-              <span className="font-medium">{label}</span>
-              <span className="text-[10px] opacity-75">choose</span>
+      {/* actions list */}
+      <div className="grid grid-cols-1 gap-2">
+        {(["stabilize","beam","magnetize","rotate","spread"] as const).map((a) => (
+          <div key={a} className="w-full">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                className={`px-3 py-1.5 rounded-md text-xs w-full text-left 
+                  ${action===a ? "bg-cyan-500 text-black" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}
+                  ${applied ? "opacity-50 cursor-not-allowed" : ""}`}
+                onClick={() => !applied && setAction(a)}
+                disabled={applied}
+              >
+                {cap(a)}
+              </button>
+              <Hint title={cap(a)} preferredSide="right">
+                <div className="text-left">
+                  {a==="stabilize" && <>Gently nudge spokes toward even spacing (prior).</>}
+                  {a==="beam" && <>Boost toward anchors ("attention"). Auto uses nearest anchors; Selected uses your chosen token.</>}
+                  {a==="magnetize" && <>Pull tokens toward a chosen anchor (select one token first).</>}
+                  {a==="rotate" && <>Rotate the whole field by a fixed angle (normalization trick).</>}
+                  {a==="spread" && <>Push neighbors away from a chosen anchor to enlarge a cluster.</>}
+                </div>
+              </Hint>
             </div>
-            <div className="text-[11px] text-slate-400">{desc}</div>
-          </button>
+
+            {/* controls (visible only when chosen and not applied) */}
+            {action===a && !applied && (
+              <div className="mt-2 rounded-md border border-slate-700 bg-slate-900 p-2">
+                {a==="stabilize" && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs w-20 text-slate-300">Strength</span>
+                    <input className="w-full" type="range" min={0} max={1} step={0.01}
+                      value={strength} onChange={e=>setStrength(parseFloat(e.currentTarget.value))}/>
+                    <span className="text-xs w-10 text-right">{strength.toFixed(2)}</span>
+                  </div>
+                )}
+                {a==="beam" && (
+                  <div className="flex items-center gap-3">
+                    <label className="text-xs inline-flex items-center gap-2">
+                      <input type="radio" name="beam" checked={mode==="auto"} onChange={()=>setMode("auto")} />
+                      Auto
+                    </label>
+                    <label className="text-xs inline-flex items-center gap-2">
+                      <input type="radio" name="beam" checked={mode==="selected"} onChange={()=>setMode("selected")} />
+                      Selected
+                    </label>
+                  </div>
+                )}
+                {a==="magnetize" && (
+                  <>
+                    <div className="text-xs mb-1 text-slate-400">
+                      {anchorOk ? "Anchor = first selected token" : "Select a token to use as anchor."}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs w-20 text-slate-300">Pull</span>
+                      <input className="w-full" type="range" min={0} max={1} step={0.01}
+                        value={amount} onChange={e=>setAmount(parseFloat(e.currentTarget.value))}/>
+                      <span className="text-xs w-10 text-right">{amount.toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
+                {a==="rotate" && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs w-20 text-slate-300">Degrees</span>
+                    <input className="w-full" type="range" min={-30} max={30} step={1}
+                      value={degrees} onChange={e=>setDegrees(parseInt(e.currentTarget.value))}/>
+                    <span className="text-xs w-10 text-right">{degrees}°</span>
+                  </div>
+                )}
+                {a==="spread" && (
+                  <>
+                    <div className="text-xs mb-1 text-slate-400">
+                      {anchorOk ? "Anchor = first selected token" : "Select a token to use as anchor."}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs w-20 text-slate-300">Amount</span>
+                      <input className="w-full" type="range" min={0} max={1} step={0.01}
+                        value={amount} onChange={e=>setAmount(parseFloat(e.currentTarget.value))}/>
+                      <span className="text-xs w-10 text-right">{amount.toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
+
+                <div className="mt-2">
+                  <button
+                    className={`w-full px-3 py-1.5 rounded-md text-xs 
+                    ${!canApply ? "bg-slate-800 text-slate-500 cursor-not-allowed" : "bg-cyan-500 text-black hover:bg-cyan-400"}`}
+                    disabled={!canApply}
+                    onClick={apply}
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         ))}
       </div>
 
-      {/* Configurators: only after an action is selected */}
-      {action && <div className="pt-2 border-t border-slate-800/60" />}
-
-      {action === "stabilize" && (
-        <Field title="Stabilize strength" help="Higher strength = larger corrective move this round.">
-          <Slider value={stabilizeStrength} setValue={setStabilizeStrength} min={5} max={80} />
-        </Field>
-      )}
-
-      {action === "beam" && (
-        <Field title="Beam mode" help="Auto emphasizes pattern spokes; Selected aims at your chosen token (select one).">
-          <Segmented
-            value={beamMode}
-            setValue={setBeamMode}
-            options={[
-              { value: "auto", label: "Auto" },
-              { value: "selected", label: "Selected" },
-            ]}
-          />
-          <div className="text-xs text-slate-400 mt-1">
-            {beamMode === "selected"
-              ? (selected.length === 1 ? "Target: selected token." : "Select exactly one token.")
-              : "No selection required."}
-          </div>
-        </Field>
-      )}
-
-      {action === "magnetize" && (
-        <Field title="Anchor & pull" help="Select one token as the anchor, then choose pull strength.">
-          <div className="text-xs text-slate-400 mb-1">
-            {selected.length === 1 ? "Anchor set from selection." : "Select exactly one token as the anchor."}
-          </div>
-          <Slider value={magnetPull} setValue={setMagnetPull} min={10} max={70} />
-        </Field>
-      )}
-
-      {action === "rotate" && (
-        <Field title="Degrees" help="Positive = counter-clockwise. Keep moves small for clarity.">
-          <Slider value={rotateDeg} setValue={setRotateDeg} min={-45} max={45} />
-        </Field>
-      )}
-
-      {action === "spread" && (
-        <Field title="Anchor & amount" help="Select one token; neighbors are gently pushed away along their angles.">
-          <div className="text-xs text-slate-400 mb-1">
-            {selected.length === 1 ? "Anchor set from selection." : "Select exactly one token as the anchor."}
-          </div>
-          <Slider value={spreadAmt} setValue={setSpreadAmt} min={10} max={70} />
-        </Field>
-      )}
-
-      <div className="flex items-center justify-end">
+      <div className="mt-3">
         <button
-          onClick={confirm}
-          disabled={!!disabledReason}
-          title={disabledReason ?? ""}
-          className={[
-            "px-3 py-2 rounded-md",
-            disabledReason
-              ? "bg-slate-900 text-slate-500 border border-slate-800 cursor-not-allowed"
-              : "bg-fuchsia-400 text-black hover:bg-fuchsia-300",
-          ].join(" ")}
+          onClick={isLastRound ? onForceNextLayer : onNextRound}
+          className={`w-full px-3 py-2 rounded-md text-sm ${
+            !canDone ? "bg-slate-800 text-slate-500 cursor-not-allowed" :
+            isLastRound ? "bg-emerald-500 text-black hover:bg-emerald-400" : 
+            "bg-slate-800 text-slate-200 hover:bg-slate-700"
+          }`}
+          disabled={!canDone}
         >
-          Done — next round
+          {!canDone ? "Apply an action first" :
+           isLastRound ? "Done — Next Layer" : 
+           `Done — go to round ${rounds + 2} / 10`}
         </button>
       </div>
-    </aside>
+    </section>
   );
 }
 
-/* ----------------------------- UI helpers ----------------------------- */
-
-function Field({
-  title,
-  help,
-  children,
-}: {
-  title: string;
-  help?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-md border border-slate-800 p-2 bg-slate-900/60">
-      <div className="flex items-center justify-between mb-2">
-        <div className="font-medium text-slate-200 text-sm">{title}</div>
-        {help && (
-          <Hint title={title} side="left">
-            {help}
-          </Hint>
-        )}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Segmented<T extends string>({
-  value,
-  setValue,
-  options,
-}: {
-  value: T;
-  setValue: (v: T) => void;
-  options: { value: T; label: string }[];
-}) {
-  return (
-    <div className="inline-flex rounded-md border border-slate-700 overflow-hidden">
-      {options.map((o, i) => (
-        <button
-          key={o.value}
-          onClick={() => setValue(o.value)}
-          className={[
-            "px-2 py-1 text-xs",
-            value === o.value ? "bg-slate-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700",
-            i !== 0 ? "border-l border-slate-700" : "",
-          ].join(" ")}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Slider({
-  value,
-  setValue,
-  min = 0,
-  max = 100,
-}: {
-  value: number;
-  setValue: (n: number) => void;
-  min?: number;
-  max?: number;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <input
-        type="range"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(e) => setValue(parseFloat(e.currentTarget.value))}
-        className="flex-1 accent-cyan-400"
-      />
-      <div className="w-14 text-right text-xs text-slate-300">{value}</div>
-    </div>
-  );
-}
-
-/* ----------------------------- utils ----------------------------- */
-function clamp01(x: number) { return Math.max(0, Math.min(1, x)); }
-function clamp(x: number, a: number, b: number) { return Math.max(a, Math.min(b, x)); }
+function cap(s: string) { return s.slice(0,1).toUpperCase()+s.slice(1); }

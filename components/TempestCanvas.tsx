@@ -1,286 +1,228 @@
 ﻿"use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 export type Sector = {
-  angle: number;          // radians
-  lane: 0 | 1;            // 0 = outer ring, 1 = inner ring
-  winner?: boolean;
-  color?: string;
+  angle: number;
+  lane: 0 | 1;
+  color: string;
   label?: string;
-};
-
-type Props = {
-  sectors: Sector[];
-  showGrid?: boolean;
-  showCosine?: boolean;   // draw cosine arc/value when two tokens selected
-  showLabels?: boolean;
-  selected?: number[];    // indices of selected sectors (0..N-1)
-  onSelect?: (index: number) => void; // click handler
+  winner?: boolean;
 };
 
 export default function TempestCanvas({
   sectors,
-  showGrid = false,
-  showCosine = false,
-  showLabels = false,
-  selected = [],
+  showGrid,
+  showCosine,
+  selected,
   onSelect,
-}: Props) {
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+}: {
+  sectors: Sector[];
+  showGrid: boolean;
+  showCosine: boolean;
+  selected: number[];
+  onSelect: (i: number) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const dprRef = useRef<number>(1);
-  const sizeRef = useRef<number>(0);
-  const rafRef = useRef<number | null>(null);
+  const drawRef = useRef<() => void>(() => {});
 
+  const pair = useMemo(
+    () => (selected.length === 2 ? [selected[0], selected[1]] : null),
+    [selected]
+  );
+
+  // stable resize observer that always calls the latest draw via drawRef
   useEffect(() => {
-    const canvas = canvasRef.current!;
-    const ctx = canvas.getContext("2d")!;
-    const dpr = (dprRef.current = Math.max(1, window?.devicePixelRatio || 1));
+    const c = canvasRef.current!;
+    const parent = c.parentElement!;
+    const ro = new ResizeObserver(() => {
+      const rect = parent.getBoundingClientRect();
+      const dpr = Math.max(1, window?.devicePixelRatio || 1);
+      const w = Math.max(1, Math.floor(rect.width));
+      const h = Math.max(1, Math.floor(rect.height));
+      c.style.width = `${w}px`;
+      c.style.height = `${h}px`;
+      c.width = Math.max(1, Math.floor(w * dpr));
+      c.height = Math.max(1, Math.floor(h * dpr));
+      drawRef.current(); // use latest draw - ensures labels always render
+    });
+    ro.observe(parent);
+    // initial paint
+    requestAnimationFrame(() => drawRef.current());
+    return () => ro.disconnect();
+  }, []);
 
-    /* ------------------------------ helpers ------------------------------ */
-    const angNorm = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
-    const angDiff = (a: number, b: number) => angNorm(a - b);
-    const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
+  // update draw function whenever inputs change
+  useEffect(() => {
+    drawRef.current = () => {
+      const c = canvasRef.current!;
+      const ctx = c.getContext("2d")!;
+      const dpr = Math.max(1, window?.devicePixelRatio || 1);
 
-    /* -------------------------------- draw -------------------------------- */
-    const draw = () => {
-      const W = canvas.width / dpr;
-      const H = canvas.height / dpr;
-      const cx = W / 2;
-      const cy = H / 2;
-
-      // Reserve margin for labels; wheel grows to max within it
-      const PAD = Math.max(36, Math.min(W, H) * 0.09);
-      const R_OUT = Math.min(W, H) / 2 - PAD;
-      const R_IN = R_OUT * 0.88;
-
-      const polar = (a: number, r: number) =>
-        [cx + r * Math.cos(a), cy - r * Math.sin(a)] as const;
-
-      // BACKGROUND
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, c.width, c.height);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "#0b1220";
-      ctx.fillRect(0, 0, W, H);
 
-      // ------------------------ WHEEL: rings + spokes -----------------------
-      // RINGS (kept inside so labels can fit near edges)
-      ctx.strokeStyle = "#22d3ee";
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(cx, cy, R_OUT, 0, Math.PI * 2); ctx.stroke();
-      ctx.setLineDash([7, 9]); ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(cx, cy, R_IN, 0, Math.PI * 2); ctx.stroke();
+      const w = c.width / dpr;
+      const h = c.height / dpr;
+      if (w < 8 || h < 8) return;
+
+      const cx = w / 2;
+      const cy = h / 2;
+      const R = Math.min(w, h) * 0.40; // small shrink for labels
+      const r = R * 0.78;
+
+      // GRID
+      if (showGrid) {
+        // axes to edges (bright, thicker)
+        ctx.strokeStyle = "#e5e7eb";
+        ctx.lineWidth = 2.5;
+        line(ctx, 0, cy, w, cy);
+        line(ctx, cx, 0, cx, h);
+
+        // numeric ticks −1, −0.5, 0, 0.5, 1
+        ctx.fillStyle = "#e5e7eb";
+        ctx.font = "bold 12px ui-sans-serif,system-ui,Segoe UI,Roboto";
+        ctx.textAlign = "center";
+        const ticks = [-1, -0.5, 0, 0.5, 1];
+        const off = R * 1.10;
+        ctx.textBaseline = "top";
+        ticks.forEach((t) => ctx.fillText(String(t), cx + t * off, cy + 4));
+        ctx.textBaseline = "middle";
+        ticks.forEach((t) => ctx.fillText(String(t), cx - 14, cy - t * off));
+      }
+
+      // rings
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#06b6d4";
+      strokedCircle(ctx, cx, cy, R);
+      ctx.setLineDash([4, 5]);
+      strokedCircle(ctx, cx, cy, r);
       ctx.setLineDash([]);
 
-      // SPOKES
-      ctx.strokeStyle = "rgba(59,130,246,0.45)";
-      ctx.lineWidth = 1.2;
+      // faint spokes
+      ctx.strokeStyle = "rgba(148,163,184,0.16)";
+      ctx.lineWidth = 1;
+      const N = Math.max(sectors.length, 36);
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2;
+        line(ctx, cx, cy, cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+      }
+
+      // winner beams
       sectors.forEach((s) => {
-        const [x, y] = polar(s.angle, R_OUT * 1.02);
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke();
+        if (!s.winner) return;
+        ctx.strokeStyle = "#fbbf24";
+        ctx.lineWidth = 3;
+        const a = s.angle;
+        line(ctx, cx, cy, cx + Math.cos(a) * R, cy + Math.sin(a) * R);
       });
 
-      // -------------------------- GRID (overlay) ----------------------------
-      // Axes drawn AFTER wheels so grid sits above rings/spokes but below tokens
-      if (showGrid) {
-        ctx.save();
-        ctx.translate(cx, cy);
+      // cosine overlay (always show minor arc) — lime lines, cyan arc/label
+      if (showCosine && pair) {
+        const [i, j] = pair;
+        const a1 = sectors[i]?.angle ?? 0;
+        const a2 = sectors[j]?.angle ?? 0;
+        const minor = Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1));
+        const end = a1 + minor;
+        const anticlockwise = minor < 0;
 
-        const halfW = W / 2;
-        const halfH = H / 2;
-
-        // Axes to edges
-        ctx.strokeStyle = "rgba(203,213,225,0.9)";
+        ctx.strokeStyle = "#84cc16"; // lime
         ctx.lineWidth = 2;
-        // X
-        ctx.beginPath(); ctx.moveTo(-halfW, 0); ctx.lineTo(halfW, 0); ctx.stroke();
-        // Y
-        ctx.beginPath(); ctx.moveTo(0, -halfH); ctx.lineTo(0, halfH); ctx.stroke();
+        line(ctx, cx, cy, cx + Math.cos(a1) * R, cy + Math.sin(a1) * R);
+        line(ctx, cx, cy, cx + Math.cos(a2) * R, cy + Math.sin(a2) * R);
 
-        // Ticks & labels at -1,-0.5,0.5,1 (scaled by R_OUT)
-        ctx.strokeStyle = "rgba(148,163,184,0.95)";
-        ctx.fillStyle = "rgba(226,232,240,0.98)";
-        ctx.lineWidth = 1.6;
-        ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
-
-        const ticks = [-1, -0.5, 0.5, 1];
-        ticks.forEach((t) => { // X
-          const x = t * R_OUT;
-          ctx.beginPath(); ctx.moveTo(x, -8); ctx.lineTo(x, 8); ctx.stroke();
-          ctx.textAlign = "center"; ctx.textBaseline = "top";
-          ctx.fillText(String(t), x, 10);
-        });
-        ticks.forEach((t) => { // Y
-          const y = t * R_OUT;
-          ctx.beginPath(); ctx.moveTo(-8, y); ctx.lineTo(8, y); ctx.stroke();
-          ctx.textAlign = "right"; ctx.textBaseline = "middle";
-          ctx.fillText(String(t), -12, y);
-        });
-
-        ctx.restore();
-      }
-
-      // ------------------------- COSINE OVERLAY -----------------------------
-      // Independent of grid; shows when enabled AND exactly two selected
-      if (showCosine && selected.length === 2) {
-        const i1 = selected[0], i2 = selected[1];
-        const a1 = sectors[i1]?.angle ?? 0;
-        const a2 = sectors[i2]?.angle ?? 0;
-
-        // Shortest signed difference and midpoint (model-space)
-        const d = angDiff(a2, a1);
-        const mid = a1 + d / 2;
-
-        // Canvas arc uses clockwise angles; convert model angle 'a' -> canvas '-a'
-        const start = -a1;
-        const end = -a2;
-        const anticw = d > 0; // draw the short way
-
-        const rArc = R_OUT * 0.62;
-
-        // arc
-        ctx.strokeStyle = "#f59e0b"; // amber-500
-        ctx.lineWidth = 2.2;
+        const ra = r * 0.52; // closer to origin
+        ctx.strokeStyle = "#22d3ee";
         ctx.beginPath();
-        ctx.arc(cx, cy, rArc, start, end, anticw);
+        ctx.arc(cx, cy, ra, a1, end, anticlockwise);
         ctx.stroke();
 
-        // rays
-        const [x1, y1] = [cx + R_OUT * Math.cos(a1), cy - R_OUT * Math.sin(a1)];
-        const [x2, y2] = [cx + R_OUT * Math.cos(a2), cy - R_OUT * Math.sin(a2)];
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x1, y1); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x2, y2); ctx.stroke();
-
-        // numeric cos value at mid-angle just outside arc
-        const rLabel = R_OUT * 0.70;
-        const lx = cx + rLabel * Math.cos(mid);
-        const ly = cy - rLabel * Math.sin(mid);
-        const cosv = Math.cos(Math.abs(d));
-        ctx.fillStyle = "#fde68a"; // amber-200
-        ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, monospace";
-        ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText(`cos Δ ≈ ${cosv.toFixed(2)}`, lx, ly);
+        const mid = a1 + minor / 2;
+        ctx.fillStyle = "#22d3ee";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "12px ui-sans-serif,system-ui,Segoe UI,Roboto";
+        ctx.fillText(
+          `cos θ = ${Math.cos(Math.abs(minor)).toFixed(2)}`,
+          cx + Math.cos(mid) * (ra + 8),
+          cy + Math.sin(mid) * (ra + 8)
+        );
       }
 
-      // ------------------------- TOKENS + LABELS ----------------------------
-      const labelOffsetOuter = Math.max(10, PAD * 0.45);
-      const labelOffsetInner = Math.max(10, PAD * 0.35);
-
+      // tokens + labels (always)
+      ctx.font = "12px ui-sans-serif,system-ui,Segoe UI,Roboto";
       sectors.forEach((s, i) => {
-        const r = s.lane === 0 ? R_OUT : R_IN;
-        const [x, y] = polar(s.angle, r);
+        const rr = s.lane === 0 ? R - 10 : r + 10;
+        const px = cx + Math.cos(s.angle) * rr;
+        const py = cy + Math.sin(s.angle) * rr;
 
-        // token dot
-        const isSel = selected.includes(i);
-        ctx.fillStyle = s.color ?? (s.winner ? "#ffd166" : "#e5e7eb");
-        const size = isSel ? 7 : s.winner ? 6 : 4;
-        ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = s.color;
+        const picked = selected.includes(i);
+        circle(ctx, px, py, picked ? 8 : 4);
 
-        // labels: outer -> outside; inner -> inside
-        if (showLabels && s.label) {
-          const offset = s.lane === 0 ? labelOffsetOuter : labelOffsetInner;
-          const labelR = s.lane === 0 ? r + offset : r - offset;
-          const [lx, ly] = polar(s.angle, labelR);
-
-          ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+        if (s.label) {
+          ctx.fillStyle = "#e2e8f0";
           ctx.textBaseline = "middle";
-
-          // Outer: text away from center; Inner: text toward center
-          const rightSide = Math.cos(s.angle) >= 0;
-          let align: CanvasTextAlign;
-          let dx: number;
-          if (s.lane === 0) { // outer
-            align = rightSide ? "left" : "right";
-            dx = rightSide ? 5 : -5;
-          } else {           // inner
-            align = rightSide ? "right" : "left";
-            dx = rightSide ? -5 : 5;
+          const cos = Math.cos(s.angle);
+          if (s.lane === 0) {
+            const lx = cx + Math.cos(s.angle) * (R + 18);
+            const ly = cy + Math.sin(s.angle) * (R + 18);
+            ctx.textAlign = cos >= 0 ? "left" : "right";
+            ctx.fillText(s.label, lx, ly);
+          } else {
+            const lx = cx + Math.cos(s.angle) * (r - 18);
+            const ly = cy + Math.sin(s.angle) * (r - 18);
+            ctx.textAlign = Math.abs(cos) < 0.3 ? "center" : cos >= 0 ? "left" : "right";
+            ctx.fillText(s.label, lx, ly);
           }
-          ctx.textAlign = align;
-          ctx.fillStyle = "rgba(255,255,255,0.96)";
-          ctx.shadowColor = "rgba(0,0,0,0.6)"; ctx.shadowBlur = 2;
-
-          // clamp to keep labels inside container horizontally
-          const tx = clamp(lx + dx, PAD + 2, W - PAD - 2);
-          ctx.fillText(s.label, tx, ly);
-          ctx.shadowBlur = 0;
         }
       });
     };
 
-    /* ------------------------------ resize ------------------------------ */
-    const resize = () => {
-      const wrap = wrapRef.current!;
-      const rect = wrap.getBoundingClientRect();
-      // Make square based on width (page uses aspect-square, but this guards if not)
-      const target = Math.max(620, rect.width);
-      if (Math.abs(target - sizeRef.current) < 0.5) {
-        if (rafRef.current) cancelAnimationFrame(rafRef.current);
-        rafRef.current = requestAnimationFrame(draw);
-        return;
-      }
-      sizeRef.current = target;
+    // draw immediately with new inputs
+    drawRef.current();
+  }, [sectors, showGrid, showCosine, selected]);
 
-      const d = Math.floor(target * dpr);
-      canvas.style.width = `${target}px`;
-      canvas.style.height = `${target}px`;
-      canvas.width = d;
-      canvas.height = d;
-
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(draw);
-    };
-
-    const ro = new ResizeObserver(() => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(resize);
-    });
-    ro.observe(wrapRef.current!);
-    resize();
-
-    /* ------------------------------ clicks ------------------------------ */
+  // selection hit-test
+  useEffect(() => {
+    const c = canvasRef.current!;
     const onClick = (ev: MouseEvent) => {
-      if (!onSelect) return;
-      const rect = canvas.getBoundingClientRect();
+      const rect = c.getBoundingClientRect();
       const x = ev.clientX - rect.left;
       const y = ev.clientY - rect.top;
-      const W = canvas.width / dpr;
-      const H = canvas.height / dpr;
-      const cx = W / 2, cy = H / 2;
 
-      const dx = x - cx;
-      const dy = cy - y; // invert y to match our polar()
-      const r = Math.hypot(dx, dy);
-      const a = Math.atan2(dy, dx);
+      const dpr = Math.max(1, window?.devicePixelRatio || 1);
+      const w = c.width / dpr;
+      const h = c.height / dpr;
+      const cx = w / 2;
+      const cy = h / 2;
+      const R = Math.min(w, h) * 0.40;
+      const r = R * 0.78;
 
-      // recompute radii to decide which lane was clicked
-      const PAD = Math.max(36, Math.min(W, H) * 0.09);
-      const R_OUT = Math.min(W, H) / 2 - PAD;
-      const R_IN = R_OUT * 0.88;
-      const laneGuess: 0 | 1 = Math.abs(r - R_OUT) < Math.abs(r - R_IN) ? 0 : 1;
-
-      // pick nearest sector on the guessed lane by angular distance
-      let best = -1, bestAbs = Infinity;
+      let best = -1, bestD = 1e9;
       sectors.forEach((s, i) => {
-        if (s.lane !== laneGuess) return;
-        const d = Math.abs(Math.atan2(Math.sin(s.angle - a), Math.cos(s.angle - a)));
-        if (d < bestAbs) { bestAbs = d; best = i; }
+        const rr = s.lane === 0 ? R - 10 : r + 10;
+        const px = cx + Math.cos(s.angle) * rr;
+        const py = cy + Math.sin(s.angle) * rr;
+        const d = Math.hypot(px - x, py - y);
+        if (d < bestD) { bestD = d; best = i; }
       });
-      if (best >= 0) onSelect(best);
+      if (best >= 0 && bestD <= 18) onSelect(best);
     };
-    canvas.addEventListener("click", onClick);
+    c.addEventListener("click", onClick);
+    return () => c.removeEventListener("click", onClick);
+  }, [sectors, onSelect]);
 
-    return () => {
-      canvas.removeEventListener("click", onClick);
-      ro.disconnect();
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    };
-  }, [sectors, showGrid, showCosine, showLabels, selected, onSelect]);
+  return <canvas ref={canvasRef} className="w-full h-full block" />;
+}
 
-  return (
-    <div ref={wrapRef} className="w-full h-full grid place-items-center">
-      <canvas ref={canvasRef} className="rounded-xl shadow-lg" />
-    </div>
-  );
+/* helpers */
+function line(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+}
+function strokedCircle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+}
+function circle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
 }

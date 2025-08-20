@@ -1,0 +1,54 @@
+{
+  "title": "Mansion Mystery",
+  "theme": "Whodunit",
+  "tokens": [
+    { "id": "weapon.rope" }, { "id": "weapon.candlestick" }, { "id": "weapon.wrench" },
+    { "id": "room.library" }, { "id": "room.kitchen" }, { "id": "room.study" },
+    { "id": "suspect.colonel_mustard" }, { "id": "suspect.miss_scarlet" }, { "id": "suspect.professor_plum" },
+    { "id": "clue.fingerprint" }, { "id": "clue.footprints" }, { "id": "clue.alibi" }
+  ],
+  "ui_hints": {
+    "cluster_colors": { "a": "#22d3ee", "b": "#a78bfa", "c": "#f472b6", "d": "#f59e0b" }
+  },
+  "prompt_scaffold": [
+    { "layer": 1, "text": "Which tokens look related? Try comparing two with cosine." },
+    { "layer": 2, "text": "Form stable clusters around anchors. Use Stabilize/Beam." },
+    { "layer": 3, "text": "Pick an anchor and Magnetize—tighten a suspect's cluster." },
+    { "layer": 4, "text": "Use Rotate to align evidence for clarity, then Spread to separate." },
+    { "layer": 5, "text": "Can you isolate the murder weapon cluster?" },
+    { "layer": 10, "text": "Boss: Who, where, with what? Justify with the clusters you built." }
+  ],
+  "dotty": {
+    "name": "Dotty",
+    "quips": [
+      "Normalize your suspicions. Long vectors skew judgement!",
+      "Cosine is just 'which way are we pointing?'",
+      "Tight clusters win mysteries.",
+      "Try the cosine overlay on two tokens to see their relationship.",
+      "Stabilize helps even out spacing - like organizing evidence.",
+      "Beam pulls tokens toward anchors - like following a trail.",
+      "Magnetize tightens clusters around your chosen anchor.",
+      "Rotate can align clusters with the grid for clarity.",
+      "Spread pushes tokens apart to separate different groups.",
+      "Energy is your budget - spend wisely each layer!"
+    ],
+    "stalls": [
+      "Hmm, no action for a while. Try comparing two tokens with cosine overlay?",
+      "Stuck? Maybe try Stabilize to even out the spacing first.",
+      "Consider using Beam to pull tokens toward the winner anchors.",
+      "Need help? Select a token and try Magnetize to form a tight cluster."
+    ],
+    "errors": [
+      "Oops! You need to select an anchor token for that action.",
+      "Can't advance yet - need better Coherence (≥55%) and Separation (≥35%).",
+      "Try using Stabilize first to improve your cluster organization.",
+      "Energy too low? Use utilities sparingly and plan your actions."
+    ],
+    "success": [
+      "Great clustering! Your vectors are well-organized.",
+      "Excellent separation between clusters!",
+      "Nice work on the coverage - all anchors have good support.",
+      "Ready for the next layer! Your mystery-solving skills are improving."
+    ]
+  }
+}

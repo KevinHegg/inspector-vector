@@ -1,99 +1,62 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
-type Props = {
-  label?: string;
-  title: string;
-  children: React.ReactNode;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-  /** desired side; "auto" flips to keep in viewport */
-  side?: "auto" | "left" | "right";
-};
+type Side = "left" | "right";
 
 export default function Hint({
-  label = "?",
   title,
   children,
-  open,
-  onOpenChange,
-  side = "auto",
-}: Props) {
-  const [internalOpen, setInternalOpen] = useState(false);
-  const shown = typeof open === "boolean" ? open : internalOpen;
-
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-  const popRef = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-
-  const close = () => (typeof open === "boolean" ? onOpenChange?.(false) : setInternalOpen(false));
-  const toggle = () =>
-    typeof open === "boolean" ? onOpenChange?.(!open) : setInternalOpen((o) => !o);
-
-  // compute fixed position to avoid clipping by parents
-  useLayoutEffect(() => {
-    if (!shown || !btnRef.current) return;
-    const b = btnRef.current.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const ph = 12; // padding horizontally
-    const pw = 288; // pop width (tailwind w-72)
-    const top = b.top + b.height + 6; // below button
-    let desired = side;
-    if (side === "auto") {
-      desired = b.right + pw + ph > vw ? "left" : "right";
-    }
-    const left = desired === "left" ? Math.max(ph, b.right - pw) : Math.min(vw - pw - ph, b.left);
-    setPos({ top, left });
-  }, [shown, side]);
+  preferredSide = "right",
+}: {
+  title: string;
+  children: React.ReactNode;
+  preferredSide?: Side;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
 
   useEffect(() => {
-    if (!shown) return;
-    const onDocClick = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (popRef.current?.contains(t) || btnRef.current?.contains(t)) return;
-      close();
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (detail !== id) setOpen(false);
     };
-    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && close();
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onEsc);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onEsc);
-    };
-  }, [shown]);
+    window.addEventListener("hint:open", onOpen as EventListener);
+    return () => window.removeEventListener("hint:open", onOpen as EventListener);
+  }, [id]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) window.dispatchEvent(new CustomEvent("hint:open", { detail: id }));
+  };
 
   return (
-    <span className="relative inline-block">
+    <span className="relative inline-flex">
       <button
-        ref={btnRef}
-        aria-expanded={shown}
-        className="h-5 w-5 rounded-full bg-slate-700 text-slate-200 text-xs leading-5
-                   hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+        type="button"
         onClick={toggle}
+        className="w-4 h-4 rounded-full text-[10px] leading-4 text-slate-900 bg-cyan-400 hover:bg-cyan-300"
+        aria-label={`Hint: ${title}`}
       >
-        {label}
+        ?
       </button>
 
-      {shown && pos && (
+      {open && (
         <div
-          ref={popRef}
-          role="dialog"
-          aria-modal="false"
-          className="fixed z-40 w-72 max-w-[min(18rem,calc(100vw-1rem))] rounded-md
-                     border border-slate-700 bg-slate-900 p-3 text-xs text-slate-200 shadow-xl"
-          style={{ top: pos.top, left: pos.left }}
+          className={`absolute z-40 mt-1 ${preferredSide === "right" ? "left-full ml-2" : "right-full mr-2"} 
+                      w-64 max-w-[18rem] rounded-md border border-slate-700 bg-slate-900 text-slate-100 shadow-lg`}
         >
-          <div className="flex items-start justify-between gap-2 mb-1">
-            <div className="font-semibold">{title}</div>
+          <div className="px-2 py-1.5 text-xs font-semibold border-b border-slate-700 flex items-center justify-between">
+            <span className="truncate">{title}</span>
             <button
+              onClick={() => setOpen(false)}
+              className="ml-2 px-1 text-slate-300 hover:text-white"
               aria-label="Close hint"
-              className="h-5 w-5 rounded-full bg-slate-700 hover:bg-slate-600 text-[11px] leading-5"
-              onClick={close}
             >
-              ×
+              ✕
             </button>
           </div>
-          <div className="text-slate-300">{children}</div>
+          <div className="p-2 text-xs text-left leading-relaxed">{children}</div>
         </div>
       )}
     </span>

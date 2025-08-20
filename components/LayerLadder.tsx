@@ -1,60 +1,59 @@
 "use client";
 
-type Props = {
+export default function LayerLadder({
+  current,
+  viewed,
+  max,
+  editMode,
+  compact = true,
+  onToggleEdit,
+  onView,
+}: {
   current: number;
   viewed: number;
   max: number;
   editMode: boolean;
-  onToggleEdit(): void;
-  onView(layer:number): void;
-};
+  compact?: boolean;
+  onToggleEdit: () => void;
+  onView: (n: number) => void;
+}) {
+  const items = Array.from({ length: max }, (_, i) => i + 1).reverse(); // top = L10
 
-export default function LayerLadder({ current, viewed, max, editMode, onToggleEdit, onView }: Props) {
-  const layers = Array.from({length: max}, (_,i)=> i+1).reverse();
   return (
-    <aside className="flex flex-col items-center">
-      <div className="text-xs uppercase tracking-wide text-slate-300 mb-2">Layer Ladder</div>
-      <button
-        onClick={onToggleEdit}
-        className={[
-          "mb-3 px-2 py-1 text-[10px] rounded border transition",
-          editMode ? "bg-amber-500/20 border-amber-400 text-amber-300" :
-                    "bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500"
-        ].join(" ")}
-        title={editMode ? "Exit edit mode" : "Enter edit mode"}
-      >
-        {editMode ? "🔓 EDIT" : "🔒 VIEW"}
-      </button>
-      <div className="relative">
-        <div className="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-1 rounded bg-slate-800" />
-        <ul className="relative z-10 flex flex-col gap-3">
-          {layers.map(n => {
-            const enabled = n <= current;
-            const active  = n === viewed;
-            return (
-              <li key={n} className="flex items-center gap-2">
-                <button
-                  disabled={!enabled}
-                  onClick={()=> onView(n)}
-                  className={[
-                    "h-6 w-6 rounded-full border transition",
-                    active ? "bg-cyan-400 border-cyan-300" :
-                    enabled ? "bg-slate-700 border-slate-500 hover:ring-2 hover:ring-cyan-400/40" :
-                              "bg-slate-900 border-slate-800 opacity-40 cursor-not-allowed"
-                  ].join(" ")}
-                  title={enabled ? `View Layer ${n}` : "Locked"}
-                />
-                <span className={[
-                  "text-xs",
-                  active ? "text-cyan-300" : enabled ? "text-slate-300" : "text-slate-600"
-                ].join(" ")}>L{n}</span>
-              </li>
-            );
-          })}
-        </ul>
+    <aside className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs font-semibold text-slate-200">LAYER LADDER</div>
+        <button
+          onClick={onToggleEdit}
+          className="text-[11px] px-2 py-1 rounded bg-slate-800 border border-slate-700 hover:bg-slate-700"
+          title="Edit lets you scrub older layers without advancing."
+        >
+          {editMode ? "Edit: On" : "Edit: Off"}
+        </button>
       </div>
-      <div className="mt-3 text-[10px] text-slate-400">
-        Viewing L{viewed} {editMode && <span className="text-amber-300">(Edit)</span>}
+      <div className="space-y-1">
+        {items.map((n) => {
+          const active = n === current;
+          const viewing = n === viewed;
+          return (
+            <button
+              key={n}
+              onClick={() => onView(n)}
+              className={`w-full flex items-center gap-2 px-2 py-1 rounded border ${
+                viewing
+                  ? "border-cyan-500 bg-slate-800/60"
+                  : "border-slate-700 bg-slate-800/30 hover:bg-slate-800/50"
+              }`}
+            >
+              <span
+                className={`inline-block w-3 h-3 rounded-full ${
+                  active ? "bg-cyan-400" : "bg-slate-500"
+                }`}
+              />
+              <span className="text-xs text-slate-200">L{n}</span>
+            </button>
+          );
+        })}
       </div>
     </aside>
   );
