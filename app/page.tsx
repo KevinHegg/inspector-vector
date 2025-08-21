@@ -69,7 +69,7 @@ function labelNear(sectors: Sector[], a: number) {
 function localResponse(
   promptText: string,
   sectors: Sector[],
-  metrics: { coherence: number; separation: number; coverage: number }
+  metrics: Metrics
 ): string {
   const clusters = buildClusters(sectors);
   const top = clusters
@@ -81,45 +81,66 @@ function localResponse(
     .slice(0, 3)
     .join(" | ");
 
-  // strongest pairwise similarities among token labels
-  const pairs: string[] = [];
-  for (let i = 0; i < sectors.length; i++) {
-    for (let j = i + 1; j < sectors.length; j++) {
-      const cos = Math.cos(Math.abs(angDiff(sectors[i].angle, sectors[j].angle)));
-      if (cos > 0.9 && sectors[i].label && sectors[j].label) pairs.push(`${sectors[i].label}–${sectors[j].label} (${cos.toFixed(2)})`);
-    }
-  }
-  const topPairs = pairs.slice(0, 3).join(" | ");
+  const conf = Math.round(100 * metrics.confidence);
+  const stability = Math.round(100 * metrics.stability);
 
-  const conf = Math.round(100 * (0.5 * metrics.coherence + 0.3 * metrics.separation + 0.2 * metrics.coverage));
-
-  return [
-    `Prompt: ${promptText}`,
-    top ? `Clusters: ${top}` : `Clusters: forming...`,
-    topPairs ? `Strong links: ${topPairs}` : `Strong links: none high yet.`,
-    `Model confidence: ${conf}% (↑ with tighter & distinct clusters).`
-  ].join("  ");
+  return `Model Quality: ${conf}% | Stability: ${stability}% | Clusters: ${top || 'forming...'}`;
 }
 
-type Metrics = { coherence: number; separation: number; coverage: number };
+// Enhanced metrics for LLM quality scoring
+type Metrics = { 
+  coherence: number; 
+  separation: number; 
+  coverage: number;
+  confidence: number; // overall model quality
+  stability: number;  // how much metrics oscillate
+};
+
 function computeMetrics(sectors: Sector[]): Metrics {
-  if (!sectors.length) return { coherence: 0, separation: 0, coverage: 0 };
+  if (!sectors.length) return { coherence: 0, separation: 0, coverage: 0, confidence: 0, stability: 0 };
+  
   let centers = sectors.map((s,i)=> (s.winner ? {i,a:s.angle}:null)).filter(Boolean) as {i:number;a:number}[];
   if (!centers.length) centers = Array.from({length:4},(_,k)=>({i:-1,a:(k/4)*TAU}));
+  
   const groups:number[][] = centers.map(()=>[]);
   sectors.forEach((s,si)=>{
     let best=0,bestAbs=Infinity;
     centers.forEach((c,ci)=>{ const d = Math.abs(angDiff(s.angle,c.a)); if(d<bestAbs){bestAbs=d;best=ci;}});
     groups[best].push(si);
   });
+  
+  // Core metrics (same as before)
   let sumC=0,cnt=0;
   groups.forEach((g,gi)=>{ const a0=centers[gi].a; g.forEach(si=>{ const d=Math.abs(angDiff(sectors[si].angle,a0)); sumC+=Math.max(0,Math.cos(d)); cnt++;});});
   const coherence = cnt? sumC/cnt : 0;
+  
   let sumPair=0,pairs=0;
   for(let i=0;i<centers.length;i++) for(let j=i+1;j<centers.length;j++){ const d=Math.abs(angDiff(centers[i].a,centers[j].a)); sumPair+=Math.max(0,Math.cos(d)); pairs++; }
   const separation = 1 - (pairs? sumPair/pairs : 1);
+  
   const coverage = centers.length ? groups.filter(g=>g.length>=3).length/centers.length : 0;
-  return { coherence: clamp01(coherence), separation: clamp01(separation), coverage: clamp01(coverage) };
+  
+  // Enhanced metrics for LLM quality
+  const confidence = (coherence * 0.4 + separation * 0.4 + coverage * 0.2);
+  
+  // Stability: measure how well-formed the clusters are (lower = more stable)
+  const stability = groups.reduce((acc, g) => {
+    if (g.length < 2) return acc;
+    const angles = g.map(si => sectors[si].angle);
+    const variance = angles.reduce((sum, a, i) => {
+      const mean = angles.reduce((s, x) => s + x, 0) / angles.length;
+      return sum + Math.pow(angDiff(a, mean), 2);
+    }, 0) / angles.length;
+    return acc + variance;
+  }, 0) / Math.max(centers.length, 1);
+  
+  return { 
+    coherence: clamp01(coherence), 
+    separation: clamp01(separation), 
+    coverage: clamp01(coverage),
+    confidence: clamp01(confidence),
+    stability: clamp01(1 - stability) // invert so higher = more stable
+  };
 }
 
 /* state */
@@ -160,15 +181,47 @@ export default function Home() {
   const { sectors, energy, selected, uses, rounds } = st;
 
   const metrics = useMemo(()=>computeMetrics(sectors),[sectors]);
-  const [lastDelta, setLastDelta] = useState<Metrics>({ coherence:0, separation:0, coverage:0 });
+  const [lastDelta, setLastDelta] = useState<Metrics>({ coherence:0, separation:0, coverage:0, confidence:0, stability:0 });
   
-  // Scoring prototype per design brief
-  const layerScore = useMemo(() => {
-    return 100 * (0.5 * metrics.coherence + 0.3 * metrics.separation + 0.2 * metrics.coverage) + energy * 0.5;
+  // New scoring system: Model Quality Score
+  const modelQualityScore = useMemo(() => {
+    // Base score from current metrics (0-100 scale)
+    const baseScore = Math.round(100 * metrics.confidence);
+    
+    // Bonus for stability (well-formed clusters)
+    const stabilityBonus = Math.round(20 * metrics.stability);
+    
+    // Energy efficiency bonus (conserving energy = better training)
+    const energyBonus = Math.round(10 * (energy / 100));
+    
+    return baseScore + stabilityBonus + energyBonus;
   }, [metrics, energy]);
   
-  // Layer gating thresholds
-  const canAdvanceLayer = metrics.coherence >= 0.55 && metrics.separation >= 0.35;
+  // Track cumulative score changes
+  const [cumulativeScore, setCumulativeScore] = useState(0);
+  const [scoreHistory, setScoreHistory] = useState<number[]>([]);
+  
+  // Update cumulative score after each action
+  useEffect(() => {
+    if (scoreHistory.length > 0) {
+      const lastScore = scoreHistory[scoreHistory.length - 1];
+      const change = modelQualityScore - lastScore;
+      setCumulativeScore(prev => prev + change);
+    }
+    // Add current score to history
+    setScoreHistory(prev => [...prev, modelQualityScore]);
+  }, [modelQualityScore]);
+  
+  // Initialize score history on first load
+  useEffect(() => {
+    if (scoreHistory.length === 0 && modelQualityScore > 0) {
+      setScoreHistory([modelQualityScore]);
+      setCumulativeScore(0);
+    }
+  }, [modelQualityScore, scoreHistory.length]);
+  
+  // Layer gating thresholds (using confidence instead of separate metrics)
+  const canAdvanceLayer = metrics.confidence >= 0.6; // Higher bar for better model quality
 
   /* seed */
   useEffect(()=>{
@@ -222,6 +275,8 @@ export default function Home() {
         coherence: nextM.coherence - prevM.coherence,
         separation: nextM.separation - prevM.separation,
         coverage: nextM.coverage - prevM.coverage,
+        confidence: nextM.confidence - prevM.confidence,
+        stability: nextM.stability - prevM.stability,
       });
       return { ...s, sectors: nextS, energy: Math.max(0, s.energy - cost), uses: { ...s.uses, [key]: s.uses[key]+1 } };
     }));
@@ -273,6 +328,8 @@ export default function Home() {
         coherence: nextM.coherence - prevM.coherence,
         separation: nextM.separation - prevM.separation,
         coverage: nextM.coverage - prevM.coverage,
+        confidence: nextM.confidence - prevM.confidence,
+        stability: nextM.stability - prevM.stability,
       });
       
       // Generate local summary after action
@@ -386,21 +443,64 @@ export default function Home() {
              </MetricBar>
              <Bar value={metrics.coverage} delta={lastDelta.coverage}/>
              
-             {/* Layer Score */}
+             {/* New Enhanced Metrics */}
+             <MetricBar label="Confidence">
+               <Hint title="Model Confidence" preferredSide="right">
+                 <div className="text-left">
+                   Overall quality of your tiny LLM (40% Coherence + 40% Separation + 20% Coverage).
+                   <br/><br/>
+                   <a href="https://en.wikipedia.org/wiki/Model_performance" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Model evaluation →</a>
+                 </div>
+               </Hint>
+             </MetricBar>
+             <Bar value={metrics.confidence} delta={lastDelta.confidence}/>
+             
+             <MetricBar label="Stability">
+               <Hint title="Training Stability" preferredSide="right">
+                 <div className="text-left">
+                   How well-formed and stable your clusters are. Higher = less oscillation between rounds.
+                   <br/><br/>
+                   <a href="https://en.wikipedia.org/wiki/Convergence_(mathematics)" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Convergence →</a>
+                 </div>
+               </Hint>
+             </MetricBar>
+             <Bar value={metrics.stability} delta={lastDelta.stability}/>
+             
+             {/* Model Quality Score */}
              <div className="mt-3 pt-3 border-t border-slate-700">
                <div className="flex items-center justify-between text-xs text-slate-300 mb-1">
-                 <span className="font-medium">Layer Score</span>
-                 <Hint title="Layer Score" preferredSide="right">
-                   Combines metrics (50% Coherence, 30% Separation, 20% Coverage) plus remaining energy bonus.
-                   <br/><br/>
-                   <a href="https://en.wikipedia.org/wiki/Evaluation_metric" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Evaluation metrics →</a>
+                 <span className="font-medium">Model Quality</span>
+                 <Hint title="Model Quality Score" preferredSide="right">
+                   <div className="text-left">
+                     Current quality of your tiny LLM (36 tokens). Higher = better clustering and separation.
+                     <br/><br/>
+                     <a href="https://en.wikipedia.org/wiki/Model_performance" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Model evaluation →</a>
+                   </div>
                  </Hint>
                </div>
                <div className="text-lg font-bold text-cyan-400">
-                 {Math.round(layerScore)}
+                 {Math.round(modelQualityScore)}
                </div>
                <div className="text-xs text-slate-400">
-                 {canAdvanceLayer ? "✅ Ready for next layer" : "❌ Need Coherence ≥55% & Separation ≥35%"}
+                 {canAdvanceLayer ? "✅ Ready for next layer" : "❌ Need Model Quality ≥60%"}
+               </div>
+             </div>
+             
+             {/* Cumulative Score */}
+             <div className="mt-2 pt-2 border-t border-slate-700">
+               <div className="flex items-center justify-between text-xs text-slate-300 mb-1">
+                 <span className="font-medium">Total Progress</span>
+                 <Hint title="Cumulative Score" preferredSide="right">
+                   <div className="text-left">
+                     How much you've improved (or degraded) the model throughout the game. Can go negative!
+                   </div>
+                 </Hint>
+               </div>
+               <div className={`text-sm font-bold ${cumulativeScore >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                 {cumulativeScore >= 0 ? '+' : ''}{cumulativeScore}
+               </div>
+               <div className="text-xs text-slate-400">
+                 {cumulativeScore >= 0 ? "Improving the model" : "Model quality declining"}
                </div>
              </div>
            </section>
@@ -444,7 +544,7 @@ export default function Home() {
            </section>
          </div>
 
-        {/* CENTER: Tempest + Prompt/Response (same width as title) */}
+        {/* CENTER: Tempest Canvas Only */}
         <div className="flex flex-col gap-3 items-center">
           <div className="rounded-xl bg-[#0b1220] border border-slate-800 overflow-visible"
                style={{ width: CENTER_MAX }}>
@@ -460,72 +560,41 @@ export default function Home() {
               </div>
             </div>
           </div>
-
-         <section className="rounded-xl border border-cyan-700 bg-slate-900/60 p-3 text-sm shadow-[0_0_0_2px_rgba(34,211,238,0.08)_inset]"
-                  style={{ width: CENTER_MAX }}>
-             <div className="flex items-start gap-6">
-               <div className="flex-1 flex flex-col gap-2">
-                 <div className="flex flex-col md:flex-row md:items-center md:gap-2">
-                   <label className="text-xs text-slate-300 min-w-[90px]">Prompt</label>
-                   <input className="flex-1 rounded-md bg-slate-900 border border-slate-700 px-2 py-1"
-                          readOnly
-                          value={bot ? bot.prompt_scaffold.find(p=>p.layer===viewLayer)?.text ?? "" : ""}/>
-                 </div>
-                 <div className="flex flex-col md:flex-row md:items-center md:gap-2">
-                   <label className="text-xs text-slate-300 min-w-[90px]">Response</label>
-                   <div className="flex-1 flex flex-col gap-2">
-                     <textarea 
-                       className="flex-1 rounded-md bg-slate-900 border border-slate-700 px-2 py-1 min-h-[60px] resize-none"
-                       readOnly
-                       value={response || "(Local analysis will appear here after each action)"}
-                       placeholder="(Local analysis will appear here after each action)"
-                     />
-                     <div className="flex items-center justify-between text-xs text-slate-400">
-                       <span>Live analysis after each Apply</span>
-                     </div>
-                     
-                     {/* Layer gating message */}
-                     {!canAdvanceLayer && (
-                       <div className="mt-2 p-2 bg-amber-900/30 border border-amber-700/50 rounded text-xs text-amber-200">
-                         ⚠️ Tighten clusters or separate anchors to advance. Need Coherence ≥55% & Separation ≥35%.
-                       </div>
-                     )}
-                   </div>
-                   
-                   {/* Boss Result Display */}
-                   {/* Removed bossResult display as per edit hint */}
-                 </div>
-               </div>
-
-                               {/* right-side vertical toggles */}
-                <div className="w-[220px] shrink-0 flex flex-col gap-3">
-                  <label className="text-xs inline-flex items-center gap-2">
-                    <input type="checkbox" className="accent-cyan-400"
-                           checked={showGrid} onChange={e=>setShowGrid(e.currentTarget.checked)}/>
-                    Show Cartesian Grid
-                    <Hint title="Cartesian grid" preferredSide="left">
-                      X/Y axes through the origin with ticks at −1, −0.5, 0, 0.5, 1. Helps visualize angles & cosine.
-                      <br/><br/>
-                      <a href="https://en.wikipedia.org/wiki/Cartesian_coordinate_system" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Cartesian coordinates →</a>
-                    </Hint>
-                  </label>
-                  <label className="text-xs inline-flex items-center gap-2">
-                    <input type="checkbox" className="accent-cyan-400"
-                           checked={showCosine} onChange={e=>setShowCosine(e.currentTarget.checked)}/>
-                    Cosine overlay
-                    <Hint title="Cosine overlay" preferredSide="left">
-                      Select two tokens to highlight the <em>smaller</em> angle and show its cosine (−1..1).
-                      <br/><br/>
-                      <a href="https://en.wikipedia.org/wiki/Cosine_similarity" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Cosine similarity →</a>
-                    </Hint>
-                  </label>
-                </div>
-             </div>
-           </section>
-         </div>
+        </div>
 
         {/* RIGHT: Dotty + Energy + Ladder */}
         <div className="flex flex-col gap-3" style={{ width: 260 }}>
+          {/* Visual Controls */}
+          <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+            <h3 className="text-xs font-semibold text-slate-200 mb-2">Visual Controls</h3>
+            <div className="flex flex-col gap-2">
+              <label className="text-xs inline-flex items-center gap-2">
+                <input type="checkbox" className="accent-cyan-400"
+                       checked={showGrid} onChange={e=>setShowGrid(e.currentTarget.checked)}/>
+                Show Cartesian Grid
+                <Hint title="Cartesian grid" preferredSide="left">
+                  <div className="text-left">
+                    X/Y axes through the origin with ticks at −1, −0.5, 0, 0.5, 1. Helps visualize angles & cosine.
+                    <br/><br/>
+                    <a href="https://en.wikipedia.org/wiki/Cartesian_coordinate_system" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Cartesian coordinates →</a>
+                  </div>
+                </Hint>
+              </label>
+              <label className="text-xs inline-flex items-center gap-2">
+                <input type="checkbox" className="accent-cyan-400"
+                       checked={showCosine} onChange={e=>setShowCosine(e.currentTarget.checked)}/>
+                Cosine overlay
+                <Hint title="Cosine overlay" preferredSide="left">
+                  <div className="text-left">
+                    Select two tokens to highlight the <em>smaller</em> angle and show its cosine (−1..1).
+                    <br/><br/>
+                    <a href="https://en.wikipedia.org/wiki/Cosine_similarity" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">Cosine similarity →</a>
+                  </div>
+                </Hint>
+              </label>
+            </div>
+          </section>
+
           <Dotty
             defaultOpen={true}
             metrics={metrics}
